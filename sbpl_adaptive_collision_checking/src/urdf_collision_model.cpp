@@ -601,9 +601,6 @@ bool URDFCollisionModel::checkLimits(const URDFModelCoords &coords) const
             throw SBPL_Exception();
         }
 
-        if(joint_name.compare("joint_tr_P") == 0)
-            continue;
-
         int var_count = jm->getVariableCount();
         robot_model::JointModel::Bounds bounds = jm->getVariableBounds();
 
@@ -682,9 +679,6 @@ bool URDFCollisionModel::updateFK(
     // then go through the other joints and set them
     for (auto it = coords.coordmap.begin(); it != coords.coordmap.end(); it++) {
         std::string joint_name = it->first;
-
-        if(joint_name.compare("joint_tr_P") == 0)
-            continue;
 
         const robot_model::JointModel* jm = state.getRobotModel()->getJointModel(joint_name);
         int var_count = jm->getVariableCount();
@@ -859,9 +853,6 @@ bool URDFCollisionModel::getInterpolatedCoordinates(
         std::vector<double> j0_pos = it0->second;
         std::vector<double> j1_pos;
         std::vector<double> jt_pos(j0_pos.size());
-        
-        if(joint_name.compare("joint_tr_P") == 0)
-            continue;
 
         if (!coords1.getCoords(joint_name, j1_pos)) {
             ROS_ERROR("Could not find joint %s in coords1", joint_name.c_str());
