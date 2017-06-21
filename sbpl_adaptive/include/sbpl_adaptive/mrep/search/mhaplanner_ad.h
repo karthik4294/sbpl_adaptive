@@ -3,8 +3,16 @@
 
 // standard includes
 #include <unordered_map>
+#include <iomanip>
+#include <ostream>
+#include <random>
+#include <assert.h>
+#include <stdlib.h>
+#include <time.h>
+#include <algorithm>
 
 // system includes
+#include <boost/math/distributions/beta.hpp>
 #include <sbpl/headers.h>
 #include <smpl/time.h>
 
@@ -172,6 +180,12 @@ private:
 
     std::vector<MHASearchState*> m_search_states;
 
+    std::minstd_rand m_rng;
+    std::uniform_real_distribution<double> m_uniform;
+    std::vector<int> m_best_hvals;
+    std::vector<double> m_alphas;
+    std::vector<double> m_betas;
+
     CHeap* m_open; ///< sequence of (m_hcount + 1) open lists
 
     std::vector<int> m_graph_to_search_state;
@@ -190,6 +204,9 @@ private:
     void clear_open_lists();
     void clear();
     long int compute_key(MHASearchState* state, int hidx);
+    double get_beta_prob(int hidx);
+    int choose_search();
+    void update_meta_method(int hidx);
     void expand(MHASearchState* state, int hidx);
     MHASearchState* state_from_open_state(AbstractSearchState* open_state);
     int compute_heuristic(int state_id, int hidx);

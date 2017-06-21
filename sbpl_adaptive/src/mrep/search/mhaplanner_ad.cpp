@@ -116,6 +116,10 @@ MHAPlanner_AD::MHAPlanner_AD(
         ROS_DEBUG_NAMED(SLOG, "  %s", ss.str().c_str());
     }
 
+    m_best_hvals.resize(num_heuristics());
+    m_alphas.resize(num_heuristics());
+    m_betas.resize(num_heuristics());
+
     /// Four Modes:
     ///     Search Until Solution Bounded
     ///     Search Until Solution Unbounded
@@ -211,10 +215,15 @@ int MHAPlanner_AD::replan(
         reinit_state(m_start_state);
         m_start_state->g = 0;
 
+        for(int hidx = 0; hidx < num_heuristics(); ++hidx) {
+            m_best_hvals[hidx] = INFINITECOST;
+        }
+
         // insert start state into all heaps with key(start, i) as priority
         int dimID = space_->GetDimID(m_start_state->state_id);
         for (int hidx : m_heuristic_list[dimID]) {
             //    for (int hidx = 0; hidx < num_heuristics(); ++hidx) {
+            m_best_hvals[hidx - 1] = m_start_state->od[hidx].h;
             CKey key;
             key.key[0] = compute_key(m_start_state, hidx);
             m_open[hidx].insertheap(&m_start_state->od[hidx].open_state, key);
@@ -231,6 +240,10 @@ int MHAPlanner_AD::replan(
 
     // m_params = params;
     m_params.max_time = params.max_time;
+
+    std::fill(m_alphas.begin(), m_alphas.end(), 1.0);
+    std::fill(m_betas.begin(), m_betas.end(), 1.0);
+    m_rng.seed(0);
 
     ROS_DEBUG_NAMED(SLOG, "Generic Search parameters:");
     ROS_DEBUG_NAMED(SLOG, "  Initial Epsilon: %0.3f", m_params.initial_eps);
@@ -270,7 +283,12 @@ int MHAPlanner_AD::replan(
         }
 
         bool all_empty = true;
-        for (int hidx = 1; hidx < num_heuristics(); ++hidx) {
+
+        int hidx = choose_search();
+        ROS_INFO("Chosen search : %d", hidx);
+        
+        // for (int hidx = 1; hidx < num_heuristics(); ++hidx) 
+        {
             if (m_open[0].emptyheap()) {
                 ROS_INFO_NAMED(SLOG, "Anchor empty");
                 break;
@@ -291,6 +309,7 @@ int MHAPlanner_AD::replan(
                     MHASearchState* s =
                             state_from_open_state(m_open[hidx].getminheap());
                     expand(s, hidx);
+                    update_meta_method(hidx);                    
                 }
             }
             else {
@@ -303,6 +322,7 @@ int MHAPlanner_AD::replan(
                     MHASearchState* s =
                             state_from_open_state(m_open[0].getminheap());
                     expand(s, 0);
+                    update_meta_method(0);                    
                 }
             }
         }
@@ -620,6 +640,75 @@ long int MHAPlanner_AD::compute_key(MHASearchState* state, int hidx)
     return (long int)state->g + (long int)(m_eps * (long int)state->od[hidx].h);
 }
 
+double MHAPlanner_AD::get_beta_prob(int hidx)
+{ 
+    std::vector<double> r(num_heuristics());
+    for (int i = 0; i < num_heuristics(); ++i) {
+        boost::math::beta_distribution<double> dist(m_alphas[i], m_betas[i]);
+        
+        // sample from distribution
+        // r[i] = quantile(dist, m_uniform(m_rng));
+        
+        // get mean of distribution
+        r[i] = m_alphas[i] /( m_alphas[i] + m_betas[i] );
+    }
+
+    ROS_INFO("Prob of q %d is %f", hidx, r[hidx-1]);
+    return r[hidx -1];
+}
+
+int MHAPlanner_AD::choose_search()
+{ 
+    std::vector<double> r(num_heuristics(), -1);
+    for (int hidx = 1; hidx < num_heuristics(); ++hidx) {
+        
+        if(m_open[hidx].emptyheap()) continue;
+
+        boost::math::beta_distribution<double> dist(m_alphas[hidx], m_betas[hidx]);
+
+        // sample from the distrbution
+        r[hidx] = quantile(dist, m_uniform(m_rng));
+
+        // get the mean of the distribution
+        // r[hidx] = m_alphas[hidx] / (m_alphas[hidx] + m_betas[hidx] );
+    }
+
+    return std::distance(r.begin(), std::max_element(r.begin(), r.end()));
+}
+
+void MHAPlanner_AD::update_meta_method(int hidx)
+{  
+    if(m_open[hidx].emptyheap()) return;
+
+    int min_h = INFINITECOST;
+    for (auto i = 1; i <= m_open[hidx].currentsize; ++i) {
+        MHASearchState* state = state_from_open_state(m_open[hidx].heap[i].heapstate);
+        if(state->od[hidx].h < min_h) min_h = state->od[hidx].h;
+    }
+
+    if(min_h == INFINITECOST) return;
+
+    ROS_INFO("Update Meta Method with exisiting min %d incoming min %d:", m_best_hvals[hidx - 1], min_h);
+    int new_best_hval = min_h;   
+    if (new_best_hval <= m_best_hvals[hidx - 1]) {
+        ROS_INFO("Update[%d] Good! :D", hidx);
+        m_best_hvals[hidx - 1] = new_best_hval;
+        m_alphas[hidx - 1] += 1.0;
+    } else {
+        ROS_INFO("Update[%d] Bad! D:", hidx);
+        m_betas[hidx - 1] += 1.0;
+    }
+
+    const double C = 100.0;
+        for (int hidx = 1; hidx < num_heuristics(); ++hidx) 
+    if (m_alphas[hidx - 1] + m_betas[hidx - 1] > C) {
+        double mod = C / (C + 1);
+        ROS_DEBUG("Renormalize! a: %0.3f, b: %0.3f -> a: %0.3f, b: %0.3f", m_alphas[hidx - 1], m_betas[hidx - 1], m_alphas[hidx - 1] * mod, m_betas[hidx - 1] * mod);
+        m_alphas[hidx - 1] *= mod;
+        m_betas[hidx - 1] *= mod;
+    }
+}
+
 void MHAPlanner_AD::expand(MHASearchState* state, int hidx)
 {
     int dimID = space_->GetDimID(state->state_id);
@@ -674,19 +763,23 @@ void MHAPlanner_AD::expand(MHASearchState* state, int hidx)
 
                 if (!closed_in_add_search(succ_state)) {
                     int dimID = space_->GetDimID(succ_state->state_id);
-                    for (int hidx : m_heuristic_list[dimID]){
+                    for (int i : m_heuristic_list[dimID]){
                     // for (int hidx = 0; hidx < num_heuristics(); ++hidx){
-                        if(hidx == 0)
+                        if(i == 0)
                             continue;
-                        long int fn = compute_key(succ_state, hidx);
+
+                        if(get_beta_prob(i) > 0.7 && i != hidx) continue;
+                        
+                        long int fn = compute_key(succ_state, i);
+
                         if (fn <= (long int)(m_eps_mha * fanchor)) {
-                            insert_or_update(succ_state, hidx, fn);
-                            ROS_DEBUG_NAMED(SSLOG, "  Update in search %d with f = %d + %0.3f * %d = %ld", hidx, succ_state->g, m_eps, succ_state->od[hidx].h, fn);
+                            insert_or_update(succ_state, i, fn);
+                            ROS_DEBUG_NAMED(SSLOG, "  Update in search %d with f = %d + %0.3f * %d = %ld", i, succ_state->g, m_eps, succ_state->od[i].h, fn);
                         }
                         else {
                             ROS_DEBUG_NAMED(SSLOG, "  Skip update in search %d with f = %d + %0.3f * %d = %ld (> %0.3f * %ld = %ld)",
-                                    hidx,
-                                    succ_state->g, m_eps, succ_state->od[hidx].h, fn,
+                                    i,
+                                    succ_state->g, m_eps, succ_state->od[i].h, fn,
                                     m_eps_mha, fanchor, (long int)(m_eps * fanchor));
                         }
                     }

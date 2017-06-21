@@ -289,10 +289,10 @@ int MHAPlanner_AD::replan(
 
         bool all_empty = true;
 
-        // int hidx = choose_search();
-        // ROS_INFO("Chosen search : %d", hidx);
+        int hidx = choose_search();
+        ROS_INFO("Chosen search : %d", hidx);
 
-        for(int hidx = 1; hidx < num_heuristics(); ++hidx)
+        // for(int hidx = 1; hidx < num_heuristics(); ++hidx)
         {
             if (m_open[0].emptyheap()) {
                 printf("Anchor empty\n");
@@ -666,9 +666,9 @@ int MHAPlanner_AD::choose_search()
 { 
     std::vector<double> r(num_heuristics(), -1);
     for (int hidx = 1; hidx < num_heuristics(); ++hidx) {
+        boost::math::beta_distribution<double> dist(m_alphas[hidx], m_betas[hidx]);
 
         // sample from the distrbution
-        boost::math::beta_distribution<double> dist(m_alphas[hidx], m_betas[hidx]);
         r[hidx] = quantile(dist, m_uniform(m_rng));
 
         // get the mean of the distribution
